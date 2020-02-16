@@ -2,9 +2,6 @@
 using System.IO;
 using System.Threading;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Collections.Concurrent;
 
 namespace VeeamTestTask
 {
@@ -12,16 +9,19 @@ namespace VeeamTestTask
     {
         private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 2;
 
-        private ConcurrentQueue<byte[]> bytesToCompress;
+        private ItemsCollection<byte[]> bytesToCompress;
+        private ItemsCollection<byte[]> bytesToWrite;
 
+        private int readIndex = 0;
+        private int entryCount = 0;
         public int BlockSize { get; }
         public GZipArchiver(int blockSize = 1048576) //default block size 1 MB
         {
             BlockSize = blockSize;
-            bytesToCompress = new ConcurrentQueue<byte[]>();
+            bytesToCompress = new ItemsCollection<byte[]>();
+            bytesToWrite = new ItemsCollection<byte[]>();
         }
-        private int entryCount = 0;
-        private int entryCompressedCount = 0;
+        
         public void Compress(string inputPath, string outputPath)
         {
             var t = DateTime.Now;
@@ -29,22 +29,27 @@ namespace VeeamTestTask
             {
                 using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    using (var cs = new GZipStream(fsout, CompressionMode.Compress, true))
+                    entryCount = (int)Math.Floor((double)(fsin.Length / BlockSize));
+                    var threadToRead = new Thread(ReadBlocks);
+                    threadToRead.Start(fsin);
+                    Thread[] threadsToCompress = new Thread[ThreadCount];
+                    for (int i = 0; i < ThreadCount; i++)
                     {
-                        entryCount = (int)Math.Floor((double)(fsin.Length / BlockSize));
-                        var threadToRead = new Thread(ReadBlocks);
-                        threadToRead.Start(fsin);
-                        var threadToCompress = new Thread(CompressBlocks);
-                        threadToCompress.Start(cs);
-                        threadToRead.Join();
-                        threadToCompress.Join();
-                        cs.Flush();
+                        threadsToCompress[i] = new Thread(CompressBlocks);
+                        threadsToCompress[i].Start();
                     }
+                    var threadToWrite = new Thread(WriteBlocks);
+                    threadToWrite.Start(fsout);
+                    threadToRead.Join();
+                    for (int i = 0; i < ThreadCount; i++)
+                    {
+                        threadsToCompress[i].Join();
+                    }
+                    threadToWrite.Join();
                 }
             }
             Console.WriteLine("Time: " + DateTime.Now.Subtract(t).TotalMilliseconds);
         }
-
         private void ReadBlocks(object inputStream)
         {
             var fsin = inputStream as FileStream;
@@ -55,26 +60,68 @@ namespace VeeamTestTask
             {
                 len = fsin.Read(buffer, 0, BlockSize);
                 pos += len;
-                byte[] p = new byte[BlockSize];
-                buffer.CopyTo(p, 0);
-                if (bytesToCompress.Count > 10)
-                    Thread.Sleep(100);
-                bytesToCompress.Enqueue(p);
+                byte[] currentBytes = new byte[BlockSize];
+                buffer.CopyTo(currentBytes, 0);
+                bytesToCompress.Add(readIndex, currentBytes);
+                //Console.WriteLine("Read: " + readIndex);
+                readIndex++;
             } while (len >= BlockSize);
         }
-        private void CompressBlocks(object zipStream)
+        private object lockObj = new object();
+        private void CompressBlocks()
         {
-            var cs = zipStream as GZipStream;
-            var currentEntries = entryCompressedCount;
-            while (currentEntries < entryCount)
+            while (bytesToCompress.EntryCount < entryCount)
             {
-                    byte[] buf;
-                    if (bytesToCompress.TryDequeue(out buf))
+                byte[] entryToCompress;
+                if (bytesToCompress.Count > 0)
+                {
+                    bool success = false;
+                    int current = 0;
+                    lock (lockObj)
                     {
-                        cs.Write(buf, 0, buf.Length);
-                        entryCompressedCount++;
-                        currentEntries = entryCompressedCount;
+                        current = bytesToCompress.EntryCount;
+                        success = bytesToCompress.TryGet(current, out entryToCompress);
                     }
+                    if (success)
+                    {
+                        using (var memoryStream = new MemoryStream())
+                        {
+                            using (var stream = new DeflateStream(memoryStream, CompressionMode.Compress))
+                            {
+                                stream.Write(entryToCompress, 0, entryToCompress.Length);
+                                stream.Flush();
+                            }
+                            //Console.WriteLine("Compress: " + current);
+                            bytesToWrite.Add(current, memoryStream.ToArray());
+                        }
+                    }
+                }
+            }
+        }
+        private void WriteBlocks(object outputStream)
+        {
+            var fsout = outputStream as FileStream;
+            while (bytesToWrite.EntryCount < entryCount)
+            {
+                byte[] entryToWrite;
+                if (bytesToWrite.Count > 0)
+                {
+                    bool success = false;
+                    int current = 0;
+                    lock (lockObj)
+                    {
+                        current = bytesToWrite.EntryCount;
+                        success = bytesToWrite.TryGet(current, out entryToWrite);
+                    }
+                    if (success)
+                    {
+                        //Console.WriteLine("Write: " + current);
+                        var size = entryToWrite.Length;
+                        var sizeBytes = BitConverter.GetBytes(size);
+                        fsout.Write(sizeBytes, 0, sizeBytes.Length);
+                        fsout.Write(entryToWrite, 0, entryToWrite.Length);
+                    }
+                }                
             }
         }
         public void Decompress(string inputPath, string outputPath)
@@ -83,15 +130,34 @@ namespace VeeamTestTask
             {
                 using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    using (Stream csStream = new GZipStream(fsin, CompressionMode.Decompress))
+                    int readBytesCount = 0;
+                    do
                     {
-                        byte[] buffer = new byte[1024];
-                        int nRead;
-                        while ((nRead = csStream.Read(buffer, 0, buffer.Length)) > 0)
+                        byte[] sizeBuf = new byte[4];
+                        readBytesCount = fsin.Read(sizeBuf, 0, 4);
+                        if (readBytesCount > 0)
                         {
-                            fsout.Write(buffer, 0, nRead);
+                            var entrySize = BitConverter.ToInt32(sizeBuf, 0);
+                            byte[] buf = new byte[entrySize];
+                            readBytesCount = fsin.Read(buf, 0, entrySize);
+                            using (var memoryStream = new MemoryStream(buf))
+                            {
+                                using (var stream = new DeflateStream(memoryStream, CompressionMode.Decompress))
+                                {
+                                    int nRead = 0;
+                                    do
+                                    {
+                                        var readBytes = new byte[1024];
+                                        nRead = stream.Read(readBytes, 0, 1024);
+                                        fsout.Write(readBytes, 0, nRead);
+                                    }
+                                    while (nRead > 0);
+                                    stream.Flush();
+                                }
+                            }
                         }
                     }
+                    while (readBytesCount > 0);
                 }
             }
         }

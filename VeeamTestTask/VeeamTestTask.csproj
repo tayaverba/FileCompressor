@@ -49,9 +49,11 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="IFileArchiver.cs" />
     <Compile Include="GZipArchiver.cs" />
+    <Compile Include="ItemsCollection.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

@@ -24,10 +24,10 @@ namespace VeeamTestTask
 
             var command = "compress";
             var inputPath = "C:\\Test\\test-big.iso";
-            var outputPath = "C:\\Test\\testZip.gz";
+            var outputPath = "C:\\Test\\testZip.mycomp";
             //command = "decompress";
-            //outputPath = "C:\\Test\\test-big1.jpg";
-            //inputPath = "C:\\Test\\testZip.gz";
+            //outputPath = "C:\\Test\\test-big1.iso";
+            //inputPath = "C:\\Test\\testZip.mycomp";
 
             IFileArchiver archiver = new GZipArchiver();
             try
