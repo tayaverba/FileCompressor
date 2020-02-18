@@ -22,7 +22,7 @@ namespace VeeamTestTask
                 EntryCount++;
                 return true;
             }
-            item = default(T);
+            item = default;
             return false;
         }
     }

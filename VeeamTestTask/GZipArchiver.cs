@@ -7,21 +7,20 @@ namespace VeeamTestTask
 {
     public class GZipArchiver : IFileArchiver
     {
-        private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 2;
+        private ItemsCollection<byte[]> _bytesToProcess;
+        private ItemsCollection<byte[]> _bytesToWrite;
 
-        private ItemsCollection<byte[]> bytesToCompress;
-        private ItemsCollection<byte[]> bytesToWrite;
-
-        private int readIndex = 0;
-        private int entryCount = 0;
+        private int _blocksCount = 0;
+        private object _lockObj = new object();
         public int BlockSize { get; }
+        private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 1;
         public GZipArchiver(int blockSize = 1048576) //default block size 1 MB
         {
             BlockSize = blockSize;
-            bytesToCompress = new ItemsCollection<byte[]>();
-            bytesToWrite = new ItemsCollection<byte[]>();
+            _bytesToProcess = new ItemsCollection<byte[]>();
+            _bytesToWrite = new ItemsCollection<byte[]>();
         }
-        
+
         public void Compress(string inputPath, string outputPath)
         {
             var t = DateTime.Now;
@@ -29,7 +28,7 @@ namespace VeeamTestTask
             {
                 using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    entryCount = (int)Math.Floor((double)(fsin.Length / BlockSize));
+                    _blocksCount = (int)Math.Floor((double)(fsin.Length / BlockSize));
                     var threadToRead = new Thread(ReadBlocks);
                     threadToRead.Start(fsin);
                     Thread[] threadsToCompress = new Thread[ThreadCount];
@@ -52,35 +51,35 @@ namespace VeeamTestTask
         }
         private void ReadBlocks(object inputStream)
         {
+            int readIndex = 0;
             var fsin = inputStream as FileStream;
             byte[] buffer = new byte[BlockSize];
-            int pos = 0;
-            int len;
+            int position = 0;
+            int readLength;
             do
             {
-                len = fsin.Read(buffer, 0, BlockSize);
-                pos += len;
+                readLength = fsin.Read(buffer, 0, BlockSize);
+                position += readLength;
                 byte[] currentBytes = new byte[BlockSize];
                 buffer.CopyTo(currentBytes, 0);
-                bytesToCompress.Add(readIndex, currentBytes);
+                _bytesToProcess.Add(readIndex, currentBytes);
                 //Console.WriteLine("Read: " + readIndex);
                 readIndex++;
-            } while (len >= BlockSize);
+            } while (readLength >= BlockSize);
         }
-        private object lockObj = new object();
         private void CompressBlocks()
         {
-            while (bytesToCompress.EntryCount < entryCount)
+            while (_bytesToProcess.EntryCount < _blocksCount)
             {
                 byte[] entryToCompress;
-                if (bytesToCompress.Count > 0)
+                if (_bytesToProcess.Count > 0)
                 {
                     bool success = false;
                     int current = 0;
-                    lock (lockObj)
+                    lock (_lockObj)
                     {
-                        current = bytesToCompress.EntryCount;
-                        success = bytesToCompress.TryGet(current, out entryToCompress);
+                        current = _bytesToProcess.EntryCount;
+                        success = _bytesToProcess.TryGet(current, out entryToCompress);
                     }
                     if (success)
                     {
@@ -92,7 +91,7 @@ namespace VeeamTestTask
                                 stream.Flush();
                             }
                             //Console.WriteLine("Compress: " + current);
-                            bytesToWrite.Add(current, memoryStream.ToArray());
+                            _bytesToWrite.Add(current, memoryStream.ToArray());
                         }
                     }
                 }
@@ -101,29 +100,28 @@ namespace VeeamTestTask
         private void WriteBlocks(object outputStream)
         {
             var fsout = outputStream as FileStream;
-            while (bytesToWrite.EntryCount < entryCount)
+            while (_bytesToWrite.EntryCount < _blocksCount)
             {
                 byte[] entryToWrite;
-                if (bytesToWrite.Count > 0)
+                if (_bytesToWrite.Count > 0)
                 {
                     bool success = false;
                     int current = 0;
-                    lock (lockObj)
+                    lock (_lockObj)
                     {
-                        current = bytesToWrite.EntryCount;
-                        success = bytesToWrite.TryGet(current, out entryToWrite);
+                        current = _bytesToWrite.EntryCount;
+                        success = _bytesToWrite.TryGet(current, out entryToWrite);
                     }
                     if (success)
                     {
                         //Console.WriteLine("Write: " + current);
-                        var size = entryToWrite.Length;
-                        var sizeBytes = BitConverter.GetBytes(size);
-                        fsout.Write(sizeBytes, 0, sizeBytes.Length);
+                        WriteBlockSize(fsout, entryToWrite.Length);
                         fsout.Write(entryToWrite, 0, entryToWrite.Length);
                     }
-                }                
+                }
             }
         }
+
         public void Decompress(string inputPath, string outputPath)
         {
             using (FileStream fsin = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -133,11 +131,9 @@ namespace VeeamTestTask
                     int readBytesCount = 0;
                     do
                     {
-                        byte[] sizeBuf = new byte[4];
-                        readBytesCount = fsin.Read(sizeBuf, 0, 4);
-                        if (readBytesCount > 0)
+                        int entrySize = ReadBlockSize(fsin);
+                        if (entrySize > 0)
                         {
-                            var entrySize = BitConverter.ToInt32(sizeBuf, 0);
                             byte[] buf = new byte[entrySize];
                             readBytesCount = fsin.Read(buf, 0, entrySize);
                             using (var memoryStream = new MemoryStream(buf))
@@ -161,5 +157,21 @@ namespace VeeamTestTask
                 }
             }
         }
+        private void WriteBlockSize(FileStream stream, int length)
+        {
+            var sizeBytes = BitConverter.GetBytes(length);
+            stream.Write(sizeBytes, 0, sizeBytes.Length);
+        }
+
+        private int ReadBlockSize(FileStream stream)
+        {
+            byte[] sizeBuf = new byte[4];
+            var readBytesCount = stream.Read(sizeBuf, 0, 4);
+            if (readBytesCount > 0)
+            {
+                return BitConverter.ToInt32(sizeBuf, 0);
+            }
+            return 0;
+        }
     }
-    }
+}

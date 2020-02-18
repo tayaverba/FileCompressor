@@ -6,8 +6,8 @@ namespace VeeamTestTask
 {
     public static class ArchiverInputValidator
     {
-        private const string compressCommandString = "compress";
-        private const string decompressCommandString = "decompress";
+        private const string CompressCommandString = "compress";
+        private const string DecompressCommandString = "decompress";
         public static InputValidatorResult ValidateArgs(string[] args)
         {
             if (args.Length != 3)
@@ -37,7 +37,7 @@ namespace VeeamTestTask
 
         public static bool ValidateCommand(string command)
         {
-            return command.ToLower().Equals(compressCommandString) || command.ToLower().Equals(decompressCommandString);
+            return command.ToLower().Equals(CompressCommandString) || command.ToLower().Equals(DecompressCommandString);
         }
         public static bool ValidateInputPath(string inputPath)
         {
@@ -51,12 +51,12 @@ namespace VeeamTestTask
 
         public static bool IsCompressCommand(string command)
         {
-            return command.Equals(compressCommandString);
+            return command.Equals(CompressCommandString);
         }
 
         public static bool IsDecompressCommand(string command)
         {
-            return command.Equals(decompressCommandString);
+            return command.Equals(DecompressCommandString);
         }
     }
 }
