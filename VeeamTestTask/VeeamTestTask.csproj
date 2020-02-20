@@ -43,13 +43,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ArchiverInputValidator.cs" />
-    <Compile Include="InputValidatorResult.cs" />
+    <Compile Include="InputValidator\ArchiverInputValidator.cs" />
+    <Compile Include="InputValidator\InputValidatorResult.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="IFileArchiver.cs" />
-    <Compile Include="GZipArchiver.cs" />
-    <Compile Include="ItemsCollection.cs" />
+    <Compile Include="Archiever\IFileArchiver.cs" />
+    <Compile Include="Archiever\GZipArchiver.cs" />
+    <Compile Include="EntryContainer.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

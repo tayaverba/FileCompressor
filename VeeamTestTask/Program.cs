@@ -9,6 +9,8 @@ namespace VeeamTestTask
 {
     class Program
     {
+        //TODO: 1. Write annotations
+        //2. Reset progress if something goes wrong?
         static int Main(string[] args)
         {
             //var validationResult = InputValidator.ValidateArgs(args);
@@ -23,11 +25,11 @@ namespace VeeamTestTask
             //var outputPath = args[2];
 
             var command = "compress";
-            var inputPath = "C:\\Test\\test.jpg";
+            var inputPath = "C:\\Test\\test-big.iso";
             var outputPath = "C:\\Test\\testZip.mycomp";
-            command = "decompress";
-            outputPath = "C:\\Test\\test-big1.jpg";
-            inputPath = "C:\\Test\\testZip.mycomp";
+            //command = "decompress";
+            //outputPath = "C:\\Test\\test-big1.jpg";
+            //inputPath = "C:\\Test\\testZip.mycomp";
 
             IFileArchiver archiver = new GZipArchiver();
             try
@@ -46,7 +48,8 @@ namespace VeeamTestTask
                 return 0;
             } catch(Exception ex)
             {
-                Console.WriteLine("Unexpected error: "+ex.Message);
+                Console.WriteLine("Unexpected error during processing file: "+ex.Message);
+                Console.WriteLine("Execution aborted");
                 Console.ReadLine();
                 return 1;
             }

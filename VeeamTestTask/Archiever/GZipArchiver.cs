@@ -7,19 +7,22 @@ namespace VeeamTestTask
 {
     public class GZipArchiver : IFileArchiver
     {
-        private int _maxSize = 100;
-        private ItemsCollection<byte[]> _bytesToProcess;
-        private ItemsCollection<byte[]> _bytesToWrite;
+        private int MaxEntriesToKeep { get; }
+        private EntryContainer _bytesToProcess;
+        private EntryContainer  _bytesToWrite;
 
         private int _blocksCount = 0;
         private static object _lockObj = new object();
         public int BlockSize { get; }
         private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 1;
-        public GZipArchiver(int blockSize = 1048576) //default block size 1 MB
+
+        //Creates new instance of GZipArchiver: default block size 1 MB, default entries to keep in memory in queue to read/write - 50 for each operation
+        public GZipArchiver(int blockSizeInBytes = 1048576, int maxEntriesToKeep = 50) 
         {
-            BlockSize = blockSize;
-            _bytesToProcess = new ItemsCollection<byte[]>(_maxSize);
-            _bytesToWrite = new ItemsCollection<byte[]>(_maxSize);
+            BlockSize = blockSizeInBytes;
+            MaxEntriesToKeep = maxEntriesToKeep;
+            _bytesToProcess = new EntryContainer(MaxEntriesToKeep);
+            _bytesToWrite = new EntryContainer(MaxEntriesToKeep);
         }
         public void Decompress(string inputPath, string outputPath)
         {
@@ -37,7 +40,7 @@ namespace VeeamTestTask
                             readBytesCount = fsin.Read(buf, 0, entrySize);
                             using (var memoryStream = new MemoryStream(buf))
                             {
-                                using (var stream = new DeflateStream(memoryStream, CompressionMode.Decompress))
+                                using (var stream = new GZipStream(memoryStream, CompressionMode.Decompress))
                                 {
                                     int nRead = 0;
                                     do
@@ -99,9 +102,8 @@ namespace VeeamTestTask
                 readLength = fsin.Read(buffer, 0, BlockSize);
                 position += readLength;
                 _bytesToProcess.Add(readIndex, buffer);
-                if (_bytesToProcess.Count > _maxSize)
+                if (_bytesToProcess.Count > MaxEntriesToKeep)
                     _bytesToProcess.WaitUntilCountBecomeLess();
-                //Console.WriteLine("Read: " + readIndex);
                 readIndex++;
             } while (readLength >= BlockSize);
         }
@@ -117,26 +119,24 @@ namespace VeeamTestTask
                     lock (_lockObj)
                     {
                         current = _bytesToProcess.EntryCount;
-                        //Console.WriteLine("Compress: " + current);
                         success = _bytesToProcess.TryGet(current, out entryToCompress);
                     }
                     if (success)
                     {
-                        byte[] bytes;
+                        byte[] compressedBytes;
                         using (var memoryStream = new MemoryStream())
                         {
-                            using (var stream = new DeflateStream(memoryStream, CompressionMode.Compress, false))
+                            using (var stream = new GZipStream(memoryStream, CompressionMode.Compress, false))
                             {
                                 stream.Write(entryToCompress, 0, entryToCompress.Length);
                                 stream.FlushAsync();
                             }
-                            //Console.WriteLine("Compress: " + current);
-                            bytes = memoryStream.ToArray();
+                            compressedBytes = memoryStream.ToArray();
                             memoryStream.FlushAsync();                            
                         }
-                        if (_bytesToWrite.Count > _maxSize)
+                        if (_bytesToWrite.Count > MaxEntriesToKeep)
                             _bytesToWrite.WaitUntilCountBecomeLess();
-                        _bytesToWrite.Add(current, bytes);
+                        _bytesToWrite.Add(current, compressedBytes);
                     }
                 }
                 current = _bytesToProcess.EntryCount;
@@ -159,7 +159,6 @@ namespace VeeamTestTask
                     }
                     if (bytesGot)
                     {
-                        //Console.WriteLine("Write: " + current);
                         WriteBlockSize(fsout, entryToWrite.Length);
                         fsout.Write(entryToWrite, 0, entryToWrite.Length);
                     }
