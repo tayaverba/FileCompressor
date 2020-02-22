@@ -5,7 +5,12 @@ using System;
 
 namespace VeeamTestTask
 {
-    public class GZipArchiver : IFileArchiver
+    /// <summary>
+    /// Represents archiver that can compress files dividing it to blocks of fixed size 
+    /// and compressing them by Deflate algorithm in parallel
+    /// and decompress files compressed with this format
+    /// </summary>
+    public class FileArchiver : IFileArchiver
     {
         private int MaxEntriesToKeep { get; }
         private EntryContainer _bytesToProcess;
@@ -13,11 +18,18 @@ namespace VeeamTestTask
 
         private int _blocksCount = 0;
         private static object _lockObj = new object();
+        /// <summary>
+        /// Size of compressing block in bytes
+        /// </summary>
         public int BlockSize { get; }
         private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 1;
 
-        //Creates new instance of GZipArchiver: default block size 1 MB, default entries to keep in memory in queue to read/write - 50 for each operation
-        public GZipArchiver(int blockSizeInBytes = 1048576, int maxEntriesToKeep = 50) 
+        /// <summary>
+        /// Creates new instance of <see cref="FileArchiver"/> 
+        /// </summary>
+        /// <param name="blockSizeInBytes">Size of compressing block in bytes</param>
+        /// <param name="maxEntriesToKeep">Count of entries to keep in memory in queues to read/write</param>
+        public FileArchiver(int blockSizeInBytes = 1048576, int maxEntriesToKeep = 50) 
         {
             BlockSize = blockSizeInBytes;
             MaxEntriesToKeep = maxEntriesToKeep;
@@ -109,7 +121,7 @@ namespace VeeamTestTask
         }
         private void CompressBlocks()
         {
-            var current = _bytesToProcess.EntryCount;
+            var current = _bytesToProcess.WithdrawalsCount;
             while (current < _blocksCount)
             {                
                 if (_bytesToProcess.Count > 0)
@@ -118,7 +130,7 @@ namespace VeeamTestTask
                     bool success = false;
                     lock (_lockObj)
                     {
-                        current = _bytesToProcess.EntryCount;
+                        current = _bytesToProcess.WithdrawalsCount;
                         success = _bytesToProcess.TryGet(current, out entryToCompress);
                     }
                     if (success)
@@ -139,13 +151,13 @@ namespace VeeamTestTask
                         _bytesToWrite.Add(current, compressedBytes);
                     }
                 }
-                current = _bytesToProcess.EntryCount;
+                current = _bytesToProcess.WithdrawalsCount;
             }
         }
         private void WriteBlocks(object outputStream)
         {
             var fsout = outputStream as FileStream;
-            var current = _bytesToWrite.EntryCount;
+            var current = _bytesToWrite.WithdrawalsCount;
             while (current < _blocksCount)
             {
                 byte[] entryToWrite;
@@ -154,7 +166,7 @@ namespace VeeamTestTask
                     bool bytesGot = false;
                     lock (_lockObj)
                     {
-                        current = _bytesToWrite.EntryCount;
+                        current = _bytesToWrite.WithdrawalsCount;
                         bytesGot = _bytesToWrite.TryGet(current, out entryToWrite);
                     }
                     if (bytesGot)
@@ -163,7 +175,7 @@ namespace VeeamTestTask
                         fsout.Write(entryToWrite, 0, entryToWrite.Length);
                     }
                 }
-                current = _bytesToWrite.EntryCount;
+                current = _bytesToWrite.WithdrawalsCount;
             }
         }
         private void WriteBlockSize(FileStream stream, int length)
@@ -171,7 +183,6 @@ namespace VeeamTestTask
             var sizeBytes = BitConverter.GetBytes(length);
             stream.Write(sizeBytes, 0, sizeBytes.Length);
         }
-
         private int ReadBlockSize(FileStream stream)
         {
             byte[] sizeBuf = new byte[4];

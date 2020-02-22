@@ -9,7 +9,7 @@ namespace VeeamTestTask
 {
     class Program
     {
-        //TODO: 1. Write annotations
+        //TODO: 1. Parallel decompressing
         //2. Reset progress if something goes wrong?
         static int Main(string[] args)
         {
@@ -31,7 +31,7 @@ namespace VeeamTestTask
             //outputPath = "C:\\Test\\test-big1.jpg";
             //inputPath = "C:\\Test\\testZip.mycomp";
 
-            IFileArchiver archiver = new GZipArchiver();
+            IFileArchiver archiver = new FileArchiver();
             try
             {
                 Console.WriteLine("File {0} is processing, please wait...", inputPath);
