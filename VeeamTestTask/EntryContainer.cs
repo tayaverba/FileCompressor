@@ -33,7 +33,8 @@ namespace VeeamTestTask
         /// <param name="item">Byte array item</param>
         public void Add(int index, byte[] item)
         {
-            Entries.TryAdd(index, item);            
+            if (!Entries.TryAdd(index, item))
+                throw new InvalidOperationException(string.Format("Item with index {0} was not added", index));
         }
         /// <summary>
         /// Attempts to get byte array to <paramref name="item"/> param by its <paramref name="index"/> and then remove it from <see cref="EntryContainer"/>

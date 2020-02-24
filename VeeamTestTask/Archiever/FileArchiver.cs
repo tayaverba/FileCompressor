@@ -5,6 +5,8 @@ using System;
 
 namespace VeeamTestTask
 {
+    //TODO: 1. Parallel decompressing
+    //2. Reset progress if something goes wrong?
     /// <summary>
     /// Represents archiver that can compress files dividing it to blocks of fixed size 
     /// and compressing them by Deflate algorithm in parallel
@@ -52,17 +54,16 @@ namespace VeeamTestTask
                             readBytesCount = fsin.Read(buf, 0, entrySize);
                             using (var memoryStream = new MemoryStream(buf))
                             {
-                                using (var stream = new GZipStream(memoryStream, CompressionMode.Decompress))
+                                using (var stream = new DeflateStream(memoryStream, CompressionMode.Decompress))
                                 {
                                     int nRead = 0;
                                     do
                                     {
                                         var readBytes = new byte[1024];
-                                        nRead = stream.Read(readBytes, 0, 1024);
+                                        nRead = stream.Read(readBytes, 0, readBytes.Length);
                                         fsout.Write(readBytes, 0, nRead);
                                     }
                                     while (nRead > 0);
-                                    stream.Flush();
                                 }
                             }
                         }
@@ -79,8 +80,7 @@ namespace VeeamTestTask
             {
                 using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    _blocksCount = (int)Math.Floor((double)(fsin.Length / BlockSize));
-                    _blocksCount = _blocksCount > 0 ? _blocksCount : 1;
+                    _blocksCount = (int)Math.Ceiling(fsin.Length / (double)BlockSize);
                     var threadToRead = new Thread(ReadBlocks);
                     threadToRead.Start(fsin);
                     Thread[] threadsToCompress = new Thread[ThreadCount];
@@ -106,13 +106,20 @@ namespace VeeamTestTask
         {
             int readIndex = 0;
             var fsin = inputStream as FileStream;
-            byte[] buffer = new byte[BlockSize];
-            int position = 0;
             int readLength;
             do
             {
+                byte[] buffer = new byte[BlockSize];
                 readLength = fsin.Read(buffer, 0, BlockSize);
-                position += readLength;
+                if (readLength < BlockSize)
+                {
+                    var buf = new byte[readLength];
+                    for(int i = 0; i < buf.Length; i++)
+                    {
+                        buf[i] = buffer[i];
+                    }
+                    buffer = buf;
+                }
                 _bytesToProcess.Add(readIndex, buffer);
                 if (_bytesToProcess.Count > MaxEntriesToKeep)
                     _bytesToProcess.WaitUntilCountBecomeLess();
@@ -138,16 +145,14 @@ namespace VeeamTestTask
                         byte[] compressedBytes;
                         using (var memoryStream = new MemoryStream())
                         {
-                            using (var stream = new GZipStream(memoryStream, CompressionMode.Compress, false))
+                            using (var stream = new DeflateStream(memoryStream, CompressionLevel.Optimal))
                             {
                                 stream.Write(entryToCompress, 0, entryToCompress.Length);
-                                stream.FlushAsync();
+                                stream.Close();
+                                compressedBytes = memoryStream.ToArray();
                             }
-                            compressedBytes = memoryStream.ToArray();
-                            memoryStream.FlushAsync();                            
                         }
                         if (_bytesToWrite.Count > MaxEntriesToKeep)
-                            _bytesToWrite.WaitUntilCountBecomeLess();
                         _bytesToWrite.Add(current, compressedBytes);
                     }
                 }
