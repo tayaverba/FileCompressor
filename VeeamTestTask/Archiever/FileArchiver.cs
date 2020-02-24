@@ -2,11 +2,10 @@
 using System.IO;
 using System.Threading;
 using System;
+using System.Collections.Generic;
 
 namespace VeeamTestTask
 {
-    //TODO: 1. Parallel decompressing
-    //2. Reset progress if something goes wrong?
     /// <summary>
     /// Represents archiver that can compress files dividing it to blocks of fixed size 
     /// and compressing them by Deflate algorithm in parallel
@@ -14,24 +13,25 @@ namespace VeeamTestTask
     /// </summary>
     public class FileArchiver : IFileArchiver
     {
+        CancellationTokenSource cts = new CancellationTokenSource();
         private int MaxEntriesToKeep { get; }
         private EntryContainer _bytesToProcess;
-        private EntryContainer  _bytesToWrite;
-
+        private EntryContainer _bytesToWrite;
+        private string _errorMessage = null;
         private int _blocksCount = 0;
         private static object _lockObj = new object();
         /// <summary>
         /// Size of compressing block in bytes
         /// </summary>
         public int BlockSize { get; }
-        private int ThreadCount => Environment.ProcessorCount - 2 > 0 ? Environment.ProcessorCount - 2 : 1;
-
+        private int ThreadCount => Environment.ProcessorCount;
+        private List<Thread> ThreadPool = new List<Thread>();
         /// <summary>
         /// Creates new instance of <see cref="FileArchiver"/> 
         /// </summary>
         /// <param name="blockSizeInBytes">Size of compressing block in bytes</param>
         /// <param name="maxEntriesToKeep">Count of entries to keep in memory in queues to read/write</param>
-        public FileArchiver(int blockSizeInBytes = 1048576, int maxEntriesToKeep = 50) 
+        public FileArchiver(int blockSizeInBytes = 1048576, int maxEntriesToKeep = 50)
         {
             BlockSize = blockSizeInBytes;
             MaxEntriesToKeep = maxEntriesToKeep;
@@ -83,20 +83,22 @@ namespace VeeamTestTask
                     _blocksCount = (int)Math.Ceiling(fsin.Length / (double)BlockSize);
                     var threadToRead = new Thread(ReadBlocks);
                     threadToRead.Start(fsin);
-                    Thread[] threadsToCompress = new Thread[ThreadCount];
-                    for (int i = 0; i < ThreadCount; i++)
+                    ThreadPool.Add(threadToRead);
+                    for (int i = 0; i < ThreadCount - 2; i++)
                     {
-                        threadsToCompress[i] = new Thread(CompressBlocks);
-                        threadsToCompress[i].Start();
+                        var threadToCompress = new Thread(CompressBlocks);
+                        threadToCompress.IsBackground = true;
+                        threadToCompress.Start();
+                        ThreadPool.Add(threadToCompress);
                     }
                     var threadToWrite = new Thread(WriteBlocks);
                     threadToWrite.Start(fsout);
-                    threadToRead.Join();
+                    ThreadPool.Add(threadToWrite);
                     for (int i = 0; i < ThreadCount; i++)
                     {
-                        threadsToCompress[i].Join();
+                        ThreadPool[i].Join();
                     }
-                    threadToWrite.Join();
+                    if (_errorMessage != null) { throw new InvalidOperationException(_errorMessage); };
                 }
             }
             Console.WriteLine("Time: " + DateTime.Now.Subtract(t).TotalMilliseconds);
@@ -104,83 +106,114 @@ namespace VeeamTestTask
 
         private void ReadBlocks(object inputStream)
         {
-            int readIndex = 0;
-            var fsin = inputStream as FileStream;
-            int readLength;
-            do
+            try
             {
-                byte[] buffer = new byte[BlockSize];
-                readLength = fsin.Read(buffer, 0, BlockSize);
-                if (readLength < BlockSize)
+                int readIndex = 0;
+                var fsin = inputStream as FileStream;
+                int readLength;
+                do
                 {
-                    var buf = new byte[readLength];
-                    for(int i = 0; i < buf.Length; i++)
+                    byte[] buffer = new byte[BlockSize];
+                    readLength = fsin.Read(buffer, 0, BlockSize);
+                    if (readLength < BlockSize)
                     {
-                        buf[i] = buffer[i];
+                        var buf = new byte[readLength];
+                        for (int i = 0; i < buf.Length; i++)
+                        {
+                            buf[i] = buffer[i];
+                        }
+                        buffer = buf;
                     }
-                    buffer = buf;
-                }
-                _bytesToProcess.Add(readIndex, buffer);
-                if (_bytesToProcess.Count > MaxEntriesToKeep)
-                    _bytesToProcess.WaitUntilCountBecomeLess();
-                readIndex++;
-            } while (readLength >= BlockSize);
+                    _bytesToProcess.Add(readIndex, buffer);
+                    if (_bytesToProcess.Count > MaxEntriesToKeep)
+                        _bytesToProcess.WaitUntilCountBecomeLess();
+                    readIndex++;
+                } while (readLength >= BlockSize && !cts.IsCancellationRequested);
+            }
+            catch (Exception ex)
+            {
+                HandleException("Error while reading input file: " + ex.Message);              
+            }
         }
+
+        private void HandleException(string errorMessage)
+        {
+            lock (_lockObj)
+            {
+                _errorMessage = errorMessage;
+                cts.Cancel();
+            }
+        }
+
         private void CompressBlocks()
         {
-            var current = _bytesToProcess.WithdrawalsCount;
-            while (current < _blocksCount)
-            {                
-                if (_bytesToProcess.Count > 0)
+            try
+            {
+                var current = _bytesToProcess.WithdrawalsCount;
+                while (current < _blocksCount && !cts.IsCancellationRequested)
                 {
-                    byte[] entryToCompress;
-                    bool success = false;
-                    lock (_lockObj)
+                    if (_bytesToProcess.Count > 0)
                     {
-                        current = _bytesToProcess.WithdrawalsCount;
-                        success = _bytesToProcess.TryGet(current, out entryToCompress);
-                    }
-                    if (success)
-                    {
-                        byte[] compressedBytes;
-                        using (var memoryStream = new MemoryStream())
+                        byte[] entryToCompress;
+                        bool success = false;
+                        lock (_lockObj)
                         {
-                            using (var stream = new DeflateStream(memoryStream, CompressionLevel.Optimal))
-                            {
-                                stream.Write(entryToCompress, 0, entryToCompress.Length);
-                                stream.Close();
-                                compressedBytes = memoryStream.ToArray();
-                            }
+                            current = _bytesToProcess.WithdrawalsCount;
+                            success = _bytesToProcess.TryGet(current, out entryToCompress);
                         }
-                        if (_bytesToWrite.Count > MaxEntriesToKeep)
-                        _bytesToWrite.Add(current, compressedBytes);
+                        if (success)
+                        {
+                            byte[] compressedBytes;
+                            using (var memoryStream = new MemoryStream())
+                            {
+                                using (var stream = new DeflateStream(memoryStream, CompressionLevel.Optimal))
+                                {
+                                    stream.Write(entryToCompress, 0, entryToCompress.Length);
+                                    stream.Close();
+                                    compressedBytes = memoryStream.ToArray();
+                                }
+                            }
+                            if (_bytesToWrite.Count > MaxEntriesToKeep)
+                                _bytesToWrite.Add(current, compressedBytes);
+                        }
                     }
+                    current = _bytesToProcess.WithdrawalsCount;
                 }
-                current = _bytesToProcess.WithdrawalsCount;
+            }
+            catch (Exception ex)
+            {
+                HandleException("Error while compressing input file: \n" + ex.Message);
             }
         }
         private void WriteBlocks(object outputStream)
         {
-            var fsout = outputStream as FileStream;
-            var current = _bytesToWrite.WithdrawalsCount;
-            while (current < _blocksCount)
+            try
             {
-                byte[] entryToWrite;
-                if (_bytesToWrite.Count > 0)
+                var fsout = outputStream as FileStream;
+                var current = _bytesToWrite.WithdrawalsCount;
+                while (current < _blocksCount && !cts.IsCancellationRequested)
                 {
-                    bool bytesGot = false;
-                    lock (_lockObj)
+                    byte[] entryToWrite;
+                    if (_bytesToWrite.Count > 0)
                     {
-                        current = _bytesToWrite.WithdrawalsCount;
-                        bytesGot = _bytesToWrite.TryGet(current, out entryToWrite);
+                        bool bytesGot = false;
+                        lock (_lockObj)
+                        {
+                            current = _bytesToWrite.WithdrawalsCount;
+                            bytesGot = _bytesToWrite.TryGet(current, out entryToWrite);
+                        }
+                        if (bytesGot)
+                        {
+                            WriteBlockSize(fsout, entryToWrite.Length);
+                            fsout.Write(entryToWrite, 0, entryToWrite.Length);
+                        }
                     }
-                    if (bytesGot)
-                    {
-                        WriteBlockSize(fsout, entryToWrite.Length);
-                        fsout.Write(entryToWrite, 0, entryToWrite.Length);
-                    }
+                    current = _bytesToWrite.WithdrawalsCount;
                 }
-                current = _bytesToWrite.WithdrawalsCount;
+            }
+            catch (Exception ex)
+            {
+                HandleException("Error while writing compressed file: " + ex.Message);
             }
         }
         private void WriteBlockSize(FileStream stream, int length)

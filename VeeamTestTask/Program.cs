@@ -22,9 +22,7 @@ namespace VeeamTestTask
 
         static int Main(string[] args)
         {
-            string[] testArgs = { "compress", "C:\\Test\\test-big.jpg", "C:\\Test\\testZip.mycomp" };
-            //string[] testArgs = { "decompress", "C:\\Test\\testZip.mycomp", "C:\\Test\\test-big1.jpg" };
-            return Parser.Default.ParseArguments<CompressOptions, DecompressOptions>(testArgs)
+            return Parser.Default.ParseArguments<CompressOptions, DecompressOptions>(args)
                 .MapResult(
                   (CompressOptions opts) => Compress(opts),
                   (DecompressOptions opts) => Decompress(opts),
@@ -36,19 +34,17 @@ namespace VeeamTestTask
             try
             {
                 Console.WriteLine("File {0} is decompressing, please wait...", opts.InputPath);
-                if (ValidateFiles(opts))
+                if (!ValidateFiles(opts))
                 {
                     return 1;
                 }
                 archiver.Decompress(opts.InputPath, opts.OutputPath);
-                Console.WriteLine("File {0} was processed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
+                Console.WriteLine("File {0} was decompressed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
                 Console.ReadLine();
                 return 0;
             } catch(Exception ex)
             {
-                Console.WriteLine("Unexpected error during decompressing file: " + ex.Message);
-                Console.WriteLine("Execution aborted");
-                Console.ReadLine();
+                CancelOperation(opts, ex.Message);
                 return 1;
             }
     }
@@ -59,20 +55,18 @@ namespace VeeamTestTask
             try
             {
                 Console.WriteLine("File {0} is compressing, please wait...", opts.InputPath);
-                if (ValidateFiles(opts))
+                if (!ValidateFiles(opts))
                 {
                     return 1;
                 }
                 archiver.Compress(opts.InputPath, opts.OutputPath);
-                Console.WriteLine("File {0} was processed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
+                Console.WriteLine("File {0} was compressed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
                 Console.ReadLine();
                 return 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Unexpected error during compressing file: " + ex.Message);
-                Console.WriteLine("Execution aborted");
-                Console.ReadLine();
+                CancelOperation(opts, ex.Message);
                 return 1;
             }
         }
@@ -81,35 +75,53 @@ namespace VeeamTestTask
             if (!ArchiverFilePathValidator.ValidateInputPath(opts.InputPath))
             {
                 Console.WriteLine("Error: input file path is incorrect: file does not exists. Try again.");
+                Console.ReadLine();
                 return false;
             }
             if (!ArchiverFilePathValidator.ValidateOutputPath(opts.OutputPath))
             {
                 Console.WriteLine("Error: output file path is incorrect or output file already exists. Try again.");
+                Console.ReadLine();
                 return false;
             }
             return true;
         }
+
+        private static void CancelOperation(Options opts, string errorMessage)
+        {
+            Console.WriteLine("Unexpected error during processing file: \n" + errorMessage);
+            if (File.Exists(opts.OutputPath))
+                File.Delete(opts.OutputPath);
+            Console.WriteLine("Execution aborted");
+            Console.ReadLine();
+        }
+
+        #region Debug functions
+        /// <summary>
+        /// Use this function to debug and test work.
+        /// It compresses and decomresses file and then compares results by md5 hash
+        /// </summary>
+        /// <returns></returns>
         private int Test()
         {
             var inputFilePath = "C:\\Test\\test-big.dat";
-            var archivedFilePath = "C:\\Test\\testZip.mycomp";
-            var unarchivedFilePath = "C:\\Test\\test2.dat";
+            var compressedFilePath = "C:\\Test\\testZip.mycomp";
+            var decompressedFilePath = "C:\\Test\\test2.dat";
 
             IFileArchiver archiver = new FileArchiver();
             try
             {
-                Console.WriteLine($"File {inputFilePath} is compressed, please wait...");
-                archiver.Compress(inputFilePath, archivedFilePath);
+                Console.WriteLine($"File {inputFilePath} is compressing, please wait...");
+                archiver.Compress(inputFilePath, compressedFilePath);
 
-                Console.WriteLine($"File {archivedFilePath} is decompressd, please wait...");
-                archiver.Decompress(archivedFilePath, unarchivedFilePath);
+                Console.WriteLine($"File {compressedFilePath} is decompressing, please wait...");
+                archiver.Decompress(compressedFilePath, decompressedFilePath);
 
-                Console.WriteLine($"File {inputFilePath} was processed successfully. Result file located in {archivedFilePath} and {unarchivedFilePath}");
+                Console.WriteLine($"File {inputFilePath} was processed successfully. Result files located in {compressedFilePath} and {decompressedFilePath}");
 
-                Console.WriteLine(CheсkEqualsTwoFiles(inputFilePath, unarchivedFilePath));
+                Console.WriteLine("Files equality check: "+ CheckFilesEqual(inputFilePath, decompressedFilePath));
                 PrintMd5(inputFilePath);
-                PrintMd5(unarchivedFilePath);
+                PrintMd5(decompressedFilePath);
                 return 0;
             }
             catch (Exception ex)
@@ -148,11 +160,12 @@ namespace VeeamTestTask
             Console.WriteLine(Md5toString(CalculateMD5(path)));
         }
 
-        private static bool CheсkEqualsTwoFiles(string firsFilePath, string secondFilePath)
+        private static bool CheckFilesEqual(string firsFilePath, string secondFilePath)
         {
             var firstFileHash = CalculateMD5(firsFilePath);
             var secondFileHash = CalculateMD5(secondFilePath);
             return firstFileHash.SequenceEqual(secondFileHash);
         }
     }
+    #endregion
 }

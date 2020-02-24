@@ -1,6 +1,4 @@
-﻿using System;
-using System.IO;
-using System.Text.RegularExpressions;
+﻿using System.IO;
 
 namespace VeeamTestTask
 {
@@ -25,8 +23,9 @@ namespace VeeamTestTask
         /// <returns> True if <paramref name="outputPath"/> does not exists and does not contains any invalid file name characters</returns>
         public static bool ValidateOutputPath(string outputPath)
         {
-            return !string.IsNullOrEmpty(outputPath) &&
-              outputPath.IndexOfAny(Path.GetInvalidFileNameChars())<0
+            var t = outputPath.IndexOfAny(Path.GetInvalidPathChars());
+            return !string.IsNullOrEmpty(outputPath)
+              && outputPath.IndexOfAny(Path.GetInvalidPathChars())<0
               && !File.Exists(outputPath);
         }
     }
