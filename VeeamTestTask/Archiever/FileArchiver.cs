@@ -13,7 +13,7 @@ namespace VeeamTestTask
     /// </summary>
     public class FileArchiver : IFileArchiver
     {
-        private readonly CancellationTokenSource cts = new CancellationTokenSource();
+        private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private static object _lockObj = new object();
         
         private BlockContainer _bytesToProcess;
@@ -47,11 +47,11 @@ namespace VeeamTestTask
             _bytesToWrite.Clear();
             _errorMessage = null;
         }
-        public void ParallelProcess(FileStream fsin, FileStream fsout, Action<object> readAction, Action processAction, Action<object> writeAction)
+        private void ParallelProcess(FileStream inputStream, FileStream outputStream, Action<object> readAction, Action processAction, Action<object> writeAction)
         {
             ClearProcessingQueues();
             var threadToRead = new Thread(new ParameterizedThreadStart(readAction));
-            threadToRead.Start(fsin);
+            threadToRead.Start(inputStream);
             ThreadPool.Add(threadToRead);
             for (int i = 0; i < ThreadCount - 2; i++)
             {
@@ -60,7 +60,7 @@ namespace VeeamTestTask
                 ThreadPool.Add(threadToDecompress);
             }
             var threadToWrite = new Thread(new ParameterizedThreadStart(writeAction));
-            threadToWrite.Start(fsout);
+            threadToWrite.Start(outputStream);
             ThreadPool.Add(threadToWrite);
             foreach (var thread in ThreadPool)
             {
@@ -73,32 +73,32 @@ namespace VeeamTestTask
             lock (_lockObj)
             {
                 _errorMessage = errorMessage;
-                cts.Cancel();
+                _cancellationTokenSource.Cancel();
             }
         }
         public void Compress(string inputPath, string outputPath)
         {
-            using (FileStream fsin = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (FileStream inputStream = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (FileStream outputStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    _blocksCount = (int)Math.Ceiling(fsin.Length / (double)BlockSize);
-                    WriteSize(fsout, _blocksCount);
-                    ParallelProcess(fsin, fsout, ReadDecompressedBlocks, CompressBlocks, WriteCompressedBlocks);
+                    _blocksCount = (int)Math.Ceiling(inputStream.Length / (double)BlockSize);
+                    WriteSize(outputStream, _blocksCount);
+                    ParallelProcess(inputStream, outputStream, ReadDecompressedBlocks, CompressBlocks, WriteCompressedBlocks);
                 }
             }
         }
-        private void ReadDecompressedBlocks(object inputStream)
+        private void ReadDecompressedBlocks(object stream)
         {
             try
             {
                 int readIndex = 0;
-                var fsin = inputStream as FileStream;
+                var inputStream = stream as FileStream;
                 int readLength;
                 do
                 {
                     byte[] buffer = new byte[BlockSize];
-                    readLength = fsin.Read(buffer, 0, BlockSize);
+                    readLength = inputStream.Read(buffer, 0, BlockSize);
                     if (readLength < BlockSize)
                     {
                         var smallBuffer = new byte[readLength];
@@ -110,9 +110,11 @@ namespace VeeamTestTask
                     }
                     _bytesToProcess.Add(readIndex, buffer);
                     if (_bytesToProcess.Count > MaxBlocksToKeep)
+                    {
                         _bytesToProcess.WaitUntilCountBecomeLess();
+                    }
                     readIndex++;
-                } while (readLength >= BlockSize && !cts.IsCancellationRequested);
+                } while (readLength >= BlockSize && !_cancellationTokenSource.IsCancellationRequested);
             }
             catch (Exception ex)
             {
@@ -124,7 +126,7 @@ namespace VeeamTestTask
             try
             {
                 var current = _bytesToProcess.WithdrawalsCount;
-                while (current < _blocksCount && !cts.IsCancellationRequested)
+                while (current < _blocksCount && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     if (_bytesToProcess.Count > 0)
                     {
@@ -160,13 +162,13 @@ namespace VeeamTestTask
                 HandleException("Error while compressing input file: \n" + ex.Message);
             }
         }
-        private void WriteCompressedBlocks(object outputStream)
+        private void WriteCompressedBlocks(object stream)
         {
             try
             {
-                var fsout = outputStream as FileStream;
+                var outputStream = stream as FileStream;
                 var current = _bytesToWrite.WithdrawalsCount;
-                while (current < _blocksCount && !cts.IsCancellationRequested)
+                while (current < _blocksCount && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     byte[] blockToWrite;
                     if (_bytesToWrite.Count > 0)
@@ -179,8 +181,8 @@ namespace VeeamTestTask
                         }
                         if (bytesGot)
                         {
-                            WriteSize(fsout, blockToWrite.Length);
-                            fsout.Write(blockToWrite, 0, blockToWrite.Length);
+                            WriteSize(outputStream, blockToWrite.Length);
+                            outputStream.Write(blockToWrite, 0, blockToWrite.Length);
                         }
                     }
                     current = _bytesToWrite.WithdrawalsCount;
@@ -198,37 +200,39 @@ namespace VeeamTestTask
         }
         public void Decompress(string inputPath, string outputPath)
         {
-            using (FileStream fsin = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (FileStream inputStream = new FileStream(inputPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                using (FileStream fsout = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (FileStream outputStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
-                    _blocksCount = ReadSize(fsin);
-                    ParallelProcess(fsin, fsout, ReadCompressedBlocks, DecompressBlocks, WriteDecompressedBlocks);
+                    _blocksCount = ReadSize(inputStream);
+                    ParallelProcess(inputStream, outputStream, ReadCompressedBlocks, DecompressBlocks, WriteDecompressedBlocks);
                 }
             }
         }
-        private void ReadCompressedBlocks(object inputStream)
+        private void ReadCompressedBlocks(object stream)
         {
             try
             {
                 int readIndex = 0;
-                var fsin = inputStream as FileStream;
+                var inputStream = stream as FileStream;
                 int readLength;
                 int compressedBlockSize;
                 do
                 {
                     readLength = 0;
-                    compressedBlockSize = ReadSize(fsin);
+                    compressedBlockSize = ReadSize(inputStream);
                     if (compressedBlockSize > 0)
                     {
                         byte[] buffer = new byte[compressedBlockSize];
-                        readLength = fsin.Read(buffer, 0, compressedBlockSize);
+                        readLength = inputStream.Read(buffer, 0, compressedBlockSize);
                         _bytesToProcess.Add(readIndex, buffer);
                         if (_bytesToProcess.Count > MaxBlocksToKeep)
+                        {
                             _bytesToProcess.WaitUntilCountBecomeLess();
+                        }
                         readIndex++;
                     }
-                } while (readLength >= compressedBlockSize && compressedBlockSize > 0 && !cts.IsCancellationRequested);
+                } while (readLength >= compressedBlockSize && compressedBlockSize > 0 && !_cancellationTokenSource.IsCancellationRequested);
             }
             catch (Exception ex)
             {
@@ -240,7 +244,7 @@ namespace VeeamTestTask
             try
             {
                 var current = _bytesToProcess.WithdrawalsCount;
-                while (current < _blocksCount && !cts.IsCancellationRequested)
+                while (current < _blocksCount && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     if (_bytesToProcess.Count > 0)
                     {
@@ -279,13 +283,13 @@ namespace VeeamTestTask
                 HandleException("Error while compressing input file: \n" + ex.Message);
             }
         }
-        private void WriteDecompressedBlocks(object outputStream)
+        private void WriteDecompressedBlocks(object stream)
         {
             try
             {
-                var fsout = outputStream as FileStream;
+                var outputStream = stream as FileStream;
                 var current = _bytesToWrite.WithdrawalsCount;
-                while (current < _blocksCount && !cts.IsCancellationRequested)
+                while (current < _blocksCount && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     byte[] blockToWrite;
                     if (_bytesToWrite.Count > 0)
@@ -298,7 +302,7 @@ namespace VeeamTestTask
                         }
                         if (bytesGot)
                         {
-                            fsout.Write(blockToWrite, 0, blockToWrite.Length);
+                            outputStream.Write(blockToWrite, 0, blockToWrite.Length);
                         }
                     }
                     current = _bytesToWrite.WithdrawalsCount;
@@ -311,8 +315,9 @@ namespace VeeamTestTask
         }
         private int ReadSize(FileStream stream)
         {
-            byte[] sizeBuf = new byte[4];
-            var readBytesCount = stream.Read(sizeBuf, 0, 4);
+            int intTypeSizeInBytes = 4;
+            byte[] sizeBuf = new byte[intTypeSizeInBytes];
+            var readBytesCount = stream.Read(sizeBuf, 0, intTypeSizeInBytes);
             if (readBytesCount > 0)
             {
                 return BitConverter.ToInt32(sizeBuf, 0);

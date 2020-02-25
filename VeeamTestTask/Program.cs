@@ -16,7 +16,7 @@ namespace VeeamTestTask
             public string OutputPath { get; set; }
         }
         [Verb("compress", HelpText = "Compress file")]
-        class CompressOptions: Options {}
+        class CompressOptions : Options { }
         [Verb("decompress", HelpText = "Decompress file")]
         class DecompressOptions : Options { }
 
@@ -24,61 +24,63 @@ namespace VeeamTestTask
         {
             return Parser.Default.ParseArguments<CompressOptions, DecompressOptions>(args)
                 .MapResult(
-                  (CompressOptions opts) => Compress(opts),
-                  (DecompressOptions opts) => Decompress(opts),
+                  (CompressOptions opts) => Compress(opts.InputPath, opts.OutputPath),
+                  (DecompressOptions opts) => Decompress(opts.InputPath, opts.OutputPath),
                   errs => 1);
         }
 
-        private static int Decompress(DecompressOptions opts) { 
-            IFileArchiver archiver = new FileArchiver();
-            try
-            {
-                Console.WriteLine("File {0} is decompressing, please wait...", opts.InputPath);
-                if (!ValidateFiles(opts))
-                {
-                    return 1;
-                }
-                archiver.Decompress(opts.InputPath, opts.OutputPath);
-                Console.WriteLine("File {0} was decompressed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
-                Console.ReadLine();
-                return 0;
-            } catch(Exception ex)
-            {
-                CancelOperation(opts, ex.Message);
-                return 1;
-            }
-    }
-
-        private static int Compress(CompressOptions opts)
+        private static int Decompress(string inputPath, string outputPath)
         {
             IFileArchiver archiver = new FileArchiver();
             try
             {
-                Console.WriteLine("File {0} is compressing, please wait...", opts.InputPath);
-                if (!ValidateFiles(opts))
+                Console.WriteLine("File {0} is decompressing, please wait...", inputPath);
+                if (!ValidateFiles(inputPath, outputPath))
                 {
                     return 1;
                 }
-                archiver.Compress(opts.InputPath, opts.OutputPath);
-                Console.WriteLine("File {0} was compressed successfully. Result file located in {1}", opts.InputPath, opts.OutputPath);
+                archiver.Decompress(inputPath, outputPath);
+                Console.WriteLine("File {0} was decompressed successfully. Result file located in {1}", inputPath, outputPath);
                 Console.ReadLine();
                 return 0;
             }
             catch (Exception ex)
             {
-                CancelOperation(opts, ex.Message);
+                CancelOperation(outputPath, ex.Message);
                 return 1;
             }
         }
-        private static bool ValidateFiles(Options opts)
+
+        private static int Compress(string inputPath, string outputPath)
         {
-            if (!ArchiverFilePathValidator.ValidateInputPath(opts.InputPath))
+            IFileArchiver archiver = new FileArchiver();
+            try
+            {
+                Console.WriteLine("File {0} is compressing, please wait...", inputPath);
+                if (!ValidateFiles(inputPath, outputPath))
+                {
+                    return 1;
+                }
+                archiver.Compress(inputPath, outputPath);
+                Console.WriteLine("File {0} was compressed successfully. Result file located in {1}", inputPath, outputPath);
+                Console.ReadLine();
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                CancelOperation(outputPath, ex.Message);
+                return 1;
+            }
+        }
+        private static bool ValidateFiles(string inputPath, string outputPath)//отдать пути
+        {
+            if (!ArchiverFilePathValidator.ValidateInputPath(inputPath))
             {
                 Console.WriteLine("Error: input file path is incorrect: file does not exists. Try again.");
                 Console.ReadLine();
                 return false;
             }
-            if (!ArchiverFilePathValidator.ValidateOutputPath(opts.OutputPath))
+            if (!ArchiverFilePathValidator.ValidateOutputPath(outputPath))
             {
                 Console.WriteLine("Error: output file path is incorrect or output file already exists. Try again.");
                 Console.ReadLine();
@@ -87,11 +89,11 @@ namespace VeeamTestTask
             return true;
         }
 
-        private static void CancelOperation(Options opts, string errorMessage)
+        private static void CancelOperation(string outputPath, string errorMessage)//отдать пути
         {
             Console.WriteLine("Unexpected error during processing file: \n" + errorMessage);
-            if (File.Exists(opts.OutputPath))
-                File.Delete(opts.OutputPath);
+            if (File.Exists(outputPath))
+                File.Delete(outputPath);
             Console.WriteLine("Execution aborted");
             Console.ReadLine();
         }
@@ -117,8 +119,8 @@ namespace VeeamTestTask
                 Console.WriteLine("Decompressing time: " + DateTime.Now.Subtract(startTime).TotalMilliseconds);
 
                 Console.WriteLine($"File {inputFilePath} was processed successfully. Result files located in {compressedFilePath} and {decompressedFilePath}");
-                
-                Console.WriteLine("Files equality check: "+ CheckFilesEqual(inputFilePath, decompressedFilePath));
+
+                Console.WriteLine("Files equality check: " + CheckFilesEqual(inputFilePath, decompressedFilePath));
                 File.Delete(compressedFilePath);
                 File.Delete(decompressedFilePath);
                 return 0;
