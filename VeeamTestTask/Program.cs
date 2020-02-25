@@ -102,26 +102,25 @@ namespace VeeamTestTask
         /// It compresses and decomresses file and then compares results by md5 hash
         /// </summary>
         /// <returns></returns>
-        private int Test()
+        private static int Test(string inputFilePath, string compressedFilePath, string decompressedFilePath)
         {
-            var inputFilePath = "C:\\Test\\test-big.dat";
-            var compressedFilePath = "C:\\Test\\testZip.mycomp";
-            var decompressedFilePath = "C:\\Test\\test2.dat";
-
             IFileArchiver archiver = new FileArchiver();
             try
             {
+                var startTime = DateTime.Now;
                 Console.WriteLine($"File {inputFilePath} is compressing, please wait...");
                 archiver.Compress(inputFilePath, compressedFilePath);
-
+                Console.WriteLine("Compressing time: " + DateTime.Now.Subtract(startTime).TotalMilliseconds);
+                startTime = DateTime.Now;
                 Console.WriteLine($"File {compressedFilePath} is decompressing, please wait...");
                 archiver.Decompress(compressedFilePath, decompressedFilePath);
+                Console.WriteLine("Decompressing time: " + DateTime.Now.Subtract(startTime).TotalMilliseconds);
 
                 Console.WriteLine($"File {inputFilePath} was processed successfully. Result files located in {compressedFilePath} and {decompressedFilePath}");
-
+                
                 Console.WriteLine("Files equality check: "+ CheckFilesEqual(inputFilePath, decompressedFilePath));
-                PrintMd5(inputFilePath);
-                PrintMd5(decompressedFilePath);
+                File.Delete(compressedFilePath);
+                File.Delete(decompressedFilePath);
                 return 0;
             }
             catch (Exception ex)
@@ -131,10 +130,6 @@ namespace VeeamTestTask
                 Console.WriteLine("Execution aborted");
 
                 return 1;
-            }
-            finally
-            {
-                Console.ReadLine();
             }
         }
         private static byte[] CalculateMD5(string path)
