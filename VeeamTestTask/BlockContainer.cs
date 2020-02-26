@@ -9,6 +9,7 @@ namespace VeeamTestTask
     /// </summary>
     public class BlockContainer
     {
+        private static object lockObj = new object();
         private AutoResetEvent _pauseEvent = new AutoResetEvent(false);
         /// <summary>
         /// Limiter of <see cref="BlockContainer"/> size. Can be used to block adding new items until some old will be removed
@@ -16,7 +17,17 @@ namespace VeeamTestTask
         public int SizeLimiter { get; private set; }
         private ConcurrentDictionary<int, byte[]> Blocks { get; set; }
         public int Count => Blocks.Count;
-        public int WithdrawalsCount { get; private set; } = 0;
+        private int _withdrawalsCount = 0;
+        public int WithdrawalsCount
+        {
+            get
+            {
+                lock (lockObj)
+                {
+                    return _withdrawalsCount;
+                }
+            }
+        }
         /// <summary>
         /// Creates new instance of <see cref="BlockContainer"/> with counter that can be used to limit <see cref="BlockContainer"/> size
         /// </summary>
@@ -42,20 +53,23 @@ namespace VeeamTestTask
         /// <param name="index">Integer key</param>
         /// <param name="item">Byte array item</param>
         /// <returns>True if <paramref name="index"/> exists and item was got; false if <paramref name="index"/> does not exists in <see cref="BlockContainer"/></returns>
-        public bool TryGet(int index, out byte[] item)
+        public bool TryGet(int index, out byte[] item)//lock?
         {
-            if (Blocks.ContainsKey(index))
+            lock (lockObj)
             {
-                Blocks.TryRemove(index, out item);
-                WithdrawalsCount++;
-                if (Count < SizeLimiter)
+                if (Blocks.ContainsKey(index))
                 {
-                    _pauseEvent.Set();
+                    Blocks.TryRemove(index, out item);
+                    _withdrawalsCount++;
+                    if (Count < SizeLimiter)
+                    {
+                        _pauseEvent.Set();
+                    }
+                    return true;
                 }
-                return true;
+                item = default;
+                return false;
             }
-            item = default;
-            return false;
         }
         /// <summary>
         /// Waits until count of <see cref="BlockContainer"/> becomes less then <see cref="SizeLimiter"/>
@@ -70,7 +84,7 @@ namespace VeeamTestTask
         public void Clear()
         {
             Blocks.Clear();
-            WithdrawalsCount = 0;
+            _withdrawalsCount = 0;
             _pauseEvent.Set();
         }
     }

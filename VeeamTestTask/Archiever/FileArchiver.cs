@@ -132,11 +132,8 @@ namespace VeeamTestTask
                     {
                         byte[] blockToCompress;
                         bool success = false;
-                        lock (_lockObj)
-                        {
-                            current = _bytesToProcess.WithdrawalsCount;
-                            success = _bytesToProcess.TryGet(current, out blockToCompress);
-                        }
+                        current = _bytesToProcess.WithdrawalsCount;
+                        success = _bytesToProcess.TryGet(current, out blockToCompress);
                         if (success)
                         {
                             byte[] compressedBytes;
@@ -174,11 +171,8 @@ namespace VeeamTestTask
                     if (_bytesToWrite.Count > 0)
                     {
                         bool bytesGot = false;
-                        lock (_lockObj)
-                        {
-                            current = _bytesToWrite.WithdrawalsCount;
-                            bytesGot = _bytesToWrite.TryGet(current, out blockToWrite);
-                        }
+                        current = _bytesToWrite.WithdrawalsCount;
+                        bytesGot = _bytesToWrite.TryGet(current, out blockToWrite);
                         if (bytesGot)
                         {
                             WriteSize(outputStream, blockToWrite.Length);
@@ -250,11 +244,8 @@ namespace VeeamTestTask
                     {
                         byte[] blockToDecompress;
                         bool success = false;
-                        lock (_lockObj)
-                        {
-                            current = _bytesToProcess.WithdrawalsCount;
-                            success = _bytesToProcess.TryGet(current, out blockToDecompress);
-                        }
+                        current = _bytesToProcess.WithdrawalsCount;
+                        success = _bytesToProcess.TryGet(current, out blockToDecompress);
                         if (success)
                         {
                             byte[] decompressedBytes;
@@ -295,11 +286,8 @@ namespace VeeamTestTask
                     if (_bytesToWrite.Count > 0)
                     {
                         bool bytesGot = false;
-                        lock (_lockObj)
-                        {
-                            current = _bytesToWrite.WithdrawalsCount;
-                            bytesGot = _bytesToWrite.TryGet(current, out blockToWrite);
-                        }
+                        current = _bytesToWrite.WithdrawalsCount;
+                        bytesGot = _bytesToWrite.TryGet(current, out blockToWrite);
                         if (bytesGot)
                         {
                             outputStream.Write(blockToWrite, 0, blockToWrite.Length);
