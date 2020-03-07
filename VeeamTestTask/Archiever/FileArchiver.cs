@@ -142,7 +142,6 @@ namespace VeeamTestTask
                                 using (var stream = new DeflateStream(memoryStream, CompressionLevel.Optimal))
                                 {
                                     stream.Write(blockToCompress, 0, blockToCompress.Length);
-                                    stream.Close();
                                     compressedBytes = memoryStream.ToArray();
                                 }
                             }
@@ -257,7 +256,6 @@ namespace VeeamTestTask
                                     {
                                         stream.CopyTo(resultStream);
                                         decompressedBytes = resultStream.ToArray();
-                                        stream.Close();
                                     }
                                 }
                             }
